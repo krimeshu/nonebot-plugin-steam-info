@@ -103,6 +103,48 @@ def draw_start_gaming(
     return canvas
 
 
+def draw_stop_gaming(
+    avatar: Image.Image,
+    friend_name: str,
+    game_name: str,
+    play_time: str,
+    nickname: str = None,
+):
+    canvas = Image.open(gaming_path)
+    canvas.paste(avatar.resize((66, 66), Image.BICUBIC), (15, 20))
+
+    draw = ImageDraw.Draw(canvas)
+    draw.text(
+        (104, 14),
+        f"{friend_name} ({nickname})" if nickname is not None else friend_name,
+        font=ImageFont.truetype(font_regular_path, 19),
+        fill=hex_to_rgb("e3ffc2"),
+    )
+
+    draw.text(
+        (103, 42),
+        "结束游玩",
+        font=ImageFont.truetype(font_regular_path, 17),
+        fill=hex_to_rgb("ff9696"),
+    )
+
+    draw.text(
+        (180, 46),
+        f"本次时长 {play_time}",
+        font=ImageFont.truetype(font_regular_path, 12),
+        fill=hex_to_rgb("969696"),
+    )
+
+    draw.text(
+        (104, 66),
+        game_name,
+        font=ImageFont.truetype(font_bold_path, 14),
+        fill=hex_to_rgb("91c257"),
+    )
+
+    return canvas
+
+
 def draw_parent_status(parent_avatar: Image.Image, parent_name: str) -> Image.Image:
     parent_avatar = parent_avatar.resize(
         (PARENT_AVATAR_SIZE, PARENT_AVATAR_SIZE), Image.BICUBIC

@@ -33,6 +33,7 @@ from .draw import (
     check_font,
     set_font_paths,
     draw_start_gaming,
+    draw_stop_gaming,
     draw_player_status,
     draw_friends_status,
     vertically_concatenate_images,
@@ -166,6 +167,7 @@ async def broadcast_steam_info(
             time_str = (
                 f"{hours} 小时 {minutes} 分钟" if hours > 0 else f"{minutes} 分钟"
             )
+            entry["time_str"] = time_str
 
             if entry["type"] == "change":
                 msg.append(
@@ -176,7 +178,9 @@ async def broadcast_steam_info(
                     f"{player['personaname']} 玩了 {time_str} {old_player['gameextrainfo']} 后不玩了"
                 )
         elif entry["type"] == "error":
-            f"出现错误！{player['personaname']}\nNew: {player.get('gameextrainfo')}\nOld: {old_player.get('gameextrainfo')}"
+            msg.append(
+                f"出现错误！{player['personaname']}\nNew: {player.get('gameextrainfo')}\nOld: {old_player.get('gameextrainfo')}"
+            )
         else:
             logger.error(f"未知的播报类型: {entry['type']}")
 
@@ -195,29 +199,70 @@ async def broadcast_steam_info(
 
         parent_avatar, parent_name = parent_data.get(parent_id)
         image = draw_friends_status(parent_avatar, parent_name, steam_status_data)
-        uni_msg = UniMessage([Text("\n".join(msg)), Image(raw=image_to_bytes(image))])
+        if config.steam_broadcast_image_only:
+            uni_msg = UniMessage([Image(raw=image_to_bytes(image))])
+        else:
+            uni_msg = UniMessage([Text("\n".join(msg)), Image(raw=image_to_bytes(image))])
     elif config.steam_broadcast_type == "part":
-        images = [
-            draw_start_gaming(
-                (await fetch_avatar(entry["player"], avatar_path, config.proxy)),
-                entry["player"]["personaname"],
-                entry["player"]["gameextrainfo"],
-                bind_data.get_by_steam_id(parent_id, entry["player"]["steamid"])[
-                    "nickname"
-                ],
-            )
-            for entry in play_data
-            if entry["type"] == "start"
-        ]
+        images = []
+        for entry in play_data:
+            player = entry["player"]
+            old_player = entry.get("old_player")
+            nickname = bind_data.get_by_steam_id(parent_id, player["steamid"])[
+                "nickname"
+            ]
+            avatar = await fetch_avatar(player, avatar_path, config.proxy)
+
+            if entry["type"] == "start":
+                images.append(
+                    draw_start_gaming(
+                        avatar,
+                        player["personaname"],
+                        player["gameextrainfo"],
+                        nickname,
+                    )
+                )
+            elif entry["type"] == "stop":
+                images.append(
+                    draw_stop_gaming(
+                        avatar,
+                        player["personaname"],
+                        old_player["gameextrainfo"],
+                        entry["time_str"],
+                        nickname,
+                    )
+                )
+            elif entry["type"] == "change":
+                images.append(
+                    draw_stop_gaming(
+                        avatar,
+                        player["personaname"],
+                        old_player["gameextrainfo"],
+                        entry["time_str"],
+                        nickname,
+                    )
+                )
+                images.append(
+                    draw_start_gaming(
+                        avatar,
+                        player["personaname"],
+                        player["gameextrainfo"],
+                        nickname,
+                    )
+                )
+
         if images == []:
             uni_msg = UniMessage([Text("\n".join(msg))])
         else:
             image = (
                 vertically_concatenate_images(images) if len(images) > 1 else images[0]
             )
-            uni_msg = UniMessage(
-                [Text("\n".join(msg)), Image(raw=image_to_bytes(image))]
-            )
+            if config.steam_broadcast_image_only:
+                uni_msg = UniMessage([Image(raw=image_to_bytes(image))])
+            else:
+                uni_msg = UniMessage(
+                    [Text("\n".join(msg)), Image(raw=image_to_bytes(image))]
+                )
     elif config.steam_broadcast_type == "none":
         uni_msg = UniMessage([Text("\n".join(msg))])
     else:
