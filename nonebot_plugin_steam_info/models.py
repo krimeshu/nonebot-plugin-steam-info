@@ -1,24 +1,27 @@
-from typing import TypedDict, List
+from typing import TypedDict, List, Optional
 
 
-class Player(TypedDict):
+class _PlayerRequired(TypedDict):
     steamid: str
+    personaname: str
+    personastate: int
+
+
+class Player(_PlayerRequired, total=False):
     communityvisibilitystate: int
     profilestate: int
-    personaname: str
     profileurl: str
     avatar: str
     avatarmedium: str
     avatarfull: str
     avatarhash: str
     lastlogoff: int
-    personastate: int
     realname: str
     primaryclanid: str
     timecreated: int
     personastateflags: int
-    # gameextrainfo: str
-    # gameid: str
+    gameextrainfo: str
+    gameid: str
 
 
 class PlayerSummariesResponse(TypedDict):
@@ -30,7 +33,7 @@ class PlayerSummaries(TypedDict):
 
 
 class ProcessedPlayer(Player):
-    game_start_time: int  # Unix timestamp
+    game_start_time: Optional[int]  # Unix timestamp
 
 
 class PlayerSummariesProcessedResponse(TypedDict):
@@ -42,14 +45,17 @@ class Achievements(TypedDict):
     image: bytes
 
 
-class GameData(TypedDict):
+class _AchievementCounts(TypedDict, total=False):
+    completed_achievement_number: int
+    total_achievement_number: int
+
+
+class GameData(_AchievementCounts):
     game_name: str
     play_time: str  # e.g. 10.2
     last_played: str  # e.g. 10 月 2 日
     game_image: bytes
     achievements: List[Achievements]
-    completed_achievement_number: int
-    total_achievement_number: int
 
 
 class PlayerData(TypedDict):
@@ -58,7 +64,7 @@ class PlayerData(TypedDict):
     background: bytes
     avatar: bytes
     description: str
-    recent_2_week_play_time: str
+    recent_2_week_play_time: Optional[str]
     game_data: List[GameData]
 
 
@@ -68,8 +74,8 @@ class DrawPlayerStatusData(TypedDict):
     last_play_time: str  # e.g. 10 月 2 日
     game_header: bytes
     achievements: List[Achievements]
-    completed_achievement_number: int
-    total_achievement_number: int
+    completed_achievement_number: Optional[int]
+    total_achievement_number: Optional[int]
 
 
 __all__ = [

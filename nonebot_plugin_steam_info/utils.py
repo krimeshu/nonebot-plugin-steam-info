@@ -23,7 +23,13 @@ async def _fetch_avatar(avatar_url: str, proxy: str = None) -> Image.Image:
 async def fetch_avatar(
     player: Player, avatar_dir: Optional[Path], proxy: str = None
 ) -> Image.Image:
-    if avatar_dir is not None:
+    avatar_url = (
+        player.get("avatarfull") or player.get("avatarmedium") or player.get("avatar")
+    )
+    if not avatar_url:
+        return Image.open(Path(__file__).parent / "res/unknown_avatar.jpg")
+
+    if avatar_dir is not None and player.get("steamid") and player.get("avatarhash"):
         avatar_path = (
             avatar_dir / f"avatar_{player['steamid']}_{player['avatarhash']}.png"
         )
@@ -31,11 +37,11 @@ async def fetch_avatar(
         if avatar_path.exists():
             avatar = Image.open(avatar_path)
         else:
-            avatar = await _fetch_avatar(player["avatarfull"], proxy)
+            avatar = await _fetch_avatar(avatar_url, proxy)
 
             avatar.save(avatar_path)
     else:
-        avatar = await _fetch_avatar(player["avatarfull"], proxy)
+        avatar = await _fetch_avatar(avatar_url, proxy)
 
     return avatar
 
@@ -43,7 +49,8 @@ async def fetch_avatar(
 def convert_player_name_to_nickname(
     data: Dict[str, str], parent_id: str, bind_data: BindData
 ) -> Dict[str, str]:
-    data["nickname"] = bind_data.get_by_steam_id(parent_id, data["steamid"])["nickname"]
+    binding = bind_data.get_by_steam_id(parent_id, data["steamid"])
+    data["nickname"] = binding.get("nickname") if binding is not None else None
     return data
 
 
@@ -51,8 +58,9 @@ async def simplize_steam_player_data(
     player: Player, proxy: str = None, avatar_dir: Path = None
 ) -> Dict[str, str]:
     avatar = await fetch_avatar(player, avatar_dir, proxy)
+    personastate = player.get("personastate")
 
-    if player["personastate"] == 0:
+    if personastate == 0:
         if not player.get("lastlogoff"):
             status = "离线"
         else:
@@ -72,15 +80,15 @@ async def simplize_steam_player_data(
                 status = f"上次在线 {time_to_now // 2592000} 个月前"
             else:
                 status = f"上次在线 {time_to_now // 31536000} 年前"
-    elif player["personastate"] in [1, 2, 4]:
+    elif personastate in [1, 2, 4]:
         status = (
             "在线" if player.get("gameextrainfo") is None else player["gameextrainfo"]
         )
-    elif player["personastate"] == 3:
+    elif personastate == 3:
         status = (
             "离开" if player.get("gameextrainfo") is None else player["gameextrainfo"]
         )
-    elif player["personastate"] in [5, 6]:
+    elif personastate in [5, 6]:
         status = "在线"
     else:
         status = "未知"
@@ -88,9 +96,9 @@ async def simplize_steam_player_data(
     return {
         "steamid": player["steamid"],
         "avatar": avatar,
-        "name": player["personaname"],
+        "name": player.get("personaname") or "Unknown",
         "status": status,
-        "personastate": player["personastate"],
+        "personastate": personastate if personastate is not None else -1,
     }
 
 

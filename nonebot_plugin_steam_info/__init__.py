@@ -160,13 +160,16 @@ async def broadcast_steam_info(
         if entry["type"] == "start":
             msg.append(f"{player['personaname']} 开始玩 {player['gameextrainfo']} 了")
         elif entry["type"] in ["stop", "change"]:
-            time_start = old_player["game_start_time"]
+            time_start = old_player.get("game_start_time")
             time_stop = time.time()
-            hours = int((time_stop - time_start) / 3600)
-            minutes = int((time_stop - time_start) % 3600 / 60)
-            time_str = (
-                f"{hours} 小时 {minutes} 分钟" if hours > 0 else f"{minutes} 分钟"
-            )
+            if time_start is None:
+                time_str = "未知时长"
+            else:
+                hours = int((time_stop - time_start) / 3600)
+                minutes = int((time_stop - time_start) % 3600 / 60)
+                time_str = (
+                    f"{hours} 小时 {minutes} 分钟" if hours > 0 else f"{minutes} 分钟"
+                )
             entry["time_str"] = time_str
 
             if entry["type"] == "change":
@@ -208,9 +211,8 @@ async def broadcast_steam_info(
         for entry in play_data:
             player = entry["player"]
             old_player = entry.get("old_player")
-            nickname = bind_data.get_by_steam_id(parent_id, player["steamid"])[
-                "nickname"
-            ]
+            binding = bind_data.get_by_steam_id(parent_id, player["steamid"])
+            nickname = binding.get("nickname") if binding is not None else None
             avatar = await fetch_avatar(player, avatar_path, config.proxy)
 
             if entry["type"] == "start":

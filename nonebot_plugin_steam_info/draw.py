@@ -253,7 +253,7 @@ def draw_friend_status(
     elif status != "离开" and personastate == 3:
         fill = (hex_to_rgb("e3ffc2"), hex_to_rgb("8ebe56"))
     else:
-        fill = personastate_colors[personastate]
+        fill = personastate_colors.get(personastate, personastate_colors[0])
 
     # 绘制名称
     draw.text(
@@ -349,7 +349,9 @@ def draw_online_friends_status(data: List[Dict[str, str]]) -> Image.Image:
     return canvas
 
 
-def draw_offline_friends_status(data: List[Dict[str, str]]) -> Image.Image:
+def draw_offline_friends_status(
+    data: List[Dict[str, str]], title: str = "离线"
+) -> Image.Image:
     canvas = Image.new(
         "RGB",
         (WIDTH, 64 + (MEMBER_AVATAR_SIZE + 16) * len(data) + 16),
@@ -361,7 +363,7 @@ def draw_offline_friends_status(data: List[Dict[str, str]]) -> Image.Image:
     # 绘制标题
     draw.text(
         (22, 22),
-        "离线",
+        title,
         hex_to_rgb("c5d6d4"),
         font=ImageFont.truetype(font_regular_path, 22),
     )
@@ -430,6 +432,11 @@ def draw_friends_status(
     offline_data = [d for d in data if d["personastate"] == 0]
     if offline_data:
         status_images.append(draw_offline_friends_status(offline_data))
+        height += status_images[-1].height
+
+    unknown_data = [d for d in data if d["personastate"] not in range(7)]
+    if unknown_data:
+        status_images.append(draw_offline_friends_status(unknown_data, title="未知"))
         height += status_images[-1].height
 
     # 拼合图片

@@ -135,7 +135,9 @@ class SteamInfoData:
                         player["game_start_time"] = int(time.time())
                     else:
                         # 继续游戏
-                        player["game_start_time"] = old_player["game_start_time"]
+                        player["game_start_time"] = old_player.get(
+                            "game_start_time"
+                        ) or int(time.time())
                 else:
                     player["game_start_time"] = None
                 processed_players.append(player)

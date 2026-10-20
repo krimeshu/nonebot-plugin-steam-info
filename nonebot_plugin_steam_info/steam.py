@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 from nonebot.log import logger
 from typing import List, Optional
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from .models import PlayerSummaries, PlayerData
 
@@ -47,10 +48,28 @@ async def get_steam_users_info(
                     f'http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key={api_key}&steamids={",".join(steam_ids)}'
                 )
                 if response.status_code == 200:
-                    return response.json()
+                    data = response.json()
+                    payload = data.get("response") if isinstance(data, dict) else None
+                    players = (
+                        payload.get("players") if isinstance(payload, dict) else None
+                    )
+                    if not isinstance(players, list):
+                        logger.warning("Invalid Steam player summaries response.")
+                        continue
+                    valid_players = []
+                    for player in players:
+                        if not isinstance(player, dict) or not player.get("steamid"):
+                            continue
+                        player = player.copy()
+                        player["steamid"] = str(player["steamid"])
+                        player["personaname"] = player.get("personaname") or "Unknown"
+                        if not isinstance(player.get("personastate"), int):
+                            player["personastate"] = -1
+                        valid_players.append(player)
+                    return {"response": {"players": valid_players}}
                 else:
                     logger.warning(f"API key {api_key} failed to get steam users info.")
-        except httpx.RequestError as exc:
+        except (httpx.RequestError, ValueError) as exc:
             logger.warning(f"API key {api_key} encountered an error: {exc}")
 
     logger.error("All API keys failed to get steam users info.")
@@ -60,6 +79,8 @@ async def get_steam_users_info(
 async def _fetch(
     url: str, default: bytes, cache_file: Optional[Path] = None, proxy: str = None
 ) -> bytes:
+    if not url:
+        return default
     if cache_file is not None and cache_file.exists():
         return cache_file.read_bytes()
     try:
@@ -76,8 +97,46 @@ async def _fetch(
         return default
 
 
+def _image_cache_file(
+    cache_path: Optional[Path], prefix: str, url: str
+) -> Optional[Path]:
+    if cache_path is None or not url:
+        return None
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return None
+    except ValueError:
+        return None
+
+    parts = parsed.path.split("/")
+    filename = parts[-1]
+    if (
+        not filename
+        or filename in (".", "..")
+        or any(c in filename for c in ("\\", "\0"))
+    ):
+        return None
+    if prefix == "avatar":
+        name = f"avatar_{filename.split('_')[0]}.jpg"
+    else:
+        if len(parts) < 3 or parts[-2] in ("", ".", ".."):
+            return None
+        parent = parts[-2]
+        if any(c in parent for c in ("\\", "\0")):
+            return None
+        if prefix == "header":
+            name = f"header_{parent}.jpg"
+        elif prefix == "achievement":
+            name = f"achievement_{parent}_{filename}"
+        else:
+            return None
+    # 保留原缓存命名；无法安全提取文件名时跳过缓存。
+    return cache_path / name
+
+
 async def get_user_data(
-    steam_id: int, cache_path: Path, proxy: str = None
+    steam_id: int, cache_path: Optional[Path], proxy: str = None
 ) -> PlayerData:
     url = f"https://steamcommunity.com/profiles/{steam_id}"
     default_background = (Path(__file__).parent / "res/bg_dots.png").read_bytes()
@@ -90,6 +149,7 @@ async def get_user_data(
     ).read_bytes()
 
     result = {
+        "steamid": str(steam_id),
         "description": "No information given.",
         "background": default_background,
         "avatar": default_avatar,
@@ -105,22 +165,16 @@ async def get_user_data(
     try:
         async with httpx.AsyncClient(
             proxy=proxy,
+            follow_redirects=True,
             headers={
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6"
             },
             cookies={"timezoneOffset": timezone_cookie_value},
         ) as client:
             response = await client.get(url)
-            if response.status_code == 200:
-                html = response.text
-            elif response.status_code == 302:
-                url = response.headers["Location"]
-                response = await client.get(url)
-                if response.status_code == 200:
-                    html = response.text
-            else:
-                response.raise_for_status()
-    except httpx.RequestError as exc:
+            response.raise_for_status()
+            html = response.text
+    except httpx.HTTPError as exc:
         logger.error(f"Failed to get user data: {exc}")
         return result
 
@@ -159,8 +213,7 @@ async def get_user_data(
     if avatar_url:
         avatar_url = avatar_url.group(1)
         # https://avatars.akamai.steamstatic.com/3ade30f61c3d2cc0b8c80aaf567b573cd022c405_full.jpg
-        avatar_url_split = avatar_url.split("/")
-        avatar_file = cache_path / f"avatar_{avatar_url_split[-1].split('_')[0]}.jpg"
+        avatar_file = _image_cache_file(cache_path, "avatar", avatar_url)
         result["avatar"] = await _fetch(
             avatar_url, default_avatar, cache_file=avatar_file, proxy=proxy
         )
@@ -182,19 +235,29 @@ async def get_user_data(
 
     for game in recent_games:
         game_info = {}
-        game_info["game_name"] = game.find("div", class_="game_name").text.strip()
-        game_info["game_image_url"] = game.find("img", class_="game_capsule")["src"]
-        game_info_split = game_info["game_image_url"].split("/")
+        game_name = game.find("div", class_="game_name")
+        game_info["game_name"] = (
+            game_name.get_text(strip=True) if game_name is not None else ""
+        ) or "Unknown"
+        game_image = game.find("img", class_="game_capsule")
+        game_info["game_image_url"] = (
+            game_image.get("src") if game_image is not None else ""
+        ) or ""
         # https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1144400/capsule_184x69_schinese.jpg?t=1724440433
 
         game_info["game_image"] = await _fetch(
             game_info["game_image_url"],
             default_header_image,
-            cache_file=cache_path / f"header_{game_info_split[-2]}.jpg",
+            cache_file=_image_cache_file(
+                cache_path, "header", game_info["game_image_url"]
+            ),
             proxy=proxy,
         )
 
-        play_time_text = game.find("div", class_="game_info_details").text.strip()
+        game_details = game.find("div", class_="game_info_details")
+        play_time_text = (
+            game_details.get_text(" ", strip=True) if game_details is not None else ""
+        )
         play_time = re.search(r"总时数\s*(.*?)\s*小时", play_time_text)
         if play_time is None:
             game_info["play_time"] = ""
@@ -204,23 +267,28 @@ async def get_user_data(
         last_played = re.search(r"最后运行日期：(.*) 日", play_time_text)
         if last_played is not None:
             game_info["last_played"] = "最后运行日期：" + last_played.group(1) + " 日"
-        else:
+        elif play_time_text:
             game_info["last_played"] = "当前正在游戏"
+        else:
+            game_info["last_played"] = "最后运行日期未知"
         achievements = []
         achievement_elements = game.find_all("div", class_="game_info_achievement")
         for achievement in achievement_elements:
             if "plus_more" in achievement["class"]:
                 continue
             achievement_info = {}
-            achievement_info["name"] = achievement["data-tooltip-text"]
-            achievement_info["image_url"] = achievement.find("img")["src"]
-            achievement_info_split = achievement_info["image_url"].split("/")
+            achievement_info["name"] = achievement.get("data-tooltip-text") or "Unknown"
+            achievement_image = achievement.find("img")
+            achievement_info["image_url"] = (
+                achievement_image.get("src") if achievement_image is not None else ""
+            ) or ""
 
             achievement_info["image"] = await _fetch(
                 achievement_info["image_url"],
                 default_achievement_image,
-                cache_file=cache_path
-                / f"achievement_{achievement_info_split[-2]}_{achievement_info_split[-1]}",
+                cache_file=_image_cache_file(
+                    cache_path, "achievement", achievement_info["image_url"]
+                ),
                 proxy=proxy,
             )
             achievements.append(achievement_info)
@@ -231,15 +299,19 @@ async def get_user_data(
         if game_info_achievement_summary is None:
             game_data.append(game_info)
             continue
-        remain_achievement_text = game_info_achievement_summary.find(
-            "span", class_="ellipsis"
-        ).text
-        game_info["completed_achievement_number"] = int(
-            remain_achievement_text.split("/")[0].strip()
+        # Steam 不一定使用 ellipsis 子元素，直接读取整个统计区域。
+        achievement_counts = re.search(
+            r"([0-9][0-9,]*)\s*/\s*([0-9][0-9,]*)",
+            game_info_achievement_summary.get_text(" ", strip=True),
         )
-        game_info["total_achievement_number"] = int(
-            remain_achievement_text.split("/")[1].strip()
-        )
+        if achievement_counts is not None:
+            completed, total = (
+                int(value.replace(",", "")) for value in achievement_counts.groups()
+            )
+            # 无有效统计时省略进度，避免绘图时除以零。
+            if 0 <= completed <= total and total > 0:
+                game_info["completed_achievement_number"] = completed
+                game_info["total_achievement_number"] = total
 
         game_data.append(game_info)
 
