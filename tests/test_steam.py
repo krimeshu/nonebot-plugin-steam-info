@@ -435,6 +435,103 @@ class MissingStatusDrawingTests(unittest.TestCase):
         self.assertGreater(image.height, empty.height)
 
 
+class ProfileDescriptionTests(unittest.TestCase):
+    def setUp(self):
+        self.draw = importlib.import_module(f"{PACKAGE_NAME}.draw")
+        self.draw.font_light_path = str(PLUGIN_DIR.parent / "fonts/MiSans-Light.ttf")
+
+    def test_line_breaks_are_not_measured_or_drawn(self):
+        from PIL import ImageDraw, ImageFont
+
+        measure = ImageFont.FreeTypeFont.getlength
+        draw_text = ImageDraw.ImageDraw.text
+        lines = []
+
+        def getlength(font, text, *args, **kwargs):
+            self.assertNotIn("\n", text)
+            self.assertNotIn("\r", text)
+            return measure(font, text, *args, **kwargs)
+
+        def text(draw, xy, value, *args, **kwargs):
+            lines.append((xy, value))
+            return draw_text(draw, xy, value, *args, **kwargs)
+
+        with patch.object(ImageFont.FreeTypeFont, "getlength", getlength):
+            with patch.object(ImageDraw.ImageDraw, "text", text):
+                self.draw._draw_player_description("第一行\r\n\n第三行\r第四行\n第五行")
+        self.assertEqual(
+            lines, [((0, 0), "第一行"), ((0, 50), "第三行"), ((0, 75), "第四行")]
+        )
+
+    def test_raqm_failure_retries_description_with_basic_layout(self):
+        from PIL import ImageDraw, ImageFont
+
+        description = "已绘制的第一行\n特殊\u200d字符"
+        basic = ImageFont.truetype(
+            self.draw.font_light_path, 22, layout_engine=ImageFont.Layout.BASIC
+        )
+        with patch.object(ImageFont, "truetype", return_value=basic):
+            expected = self.draw._draw_player_description(description)
+
+        for failure in ["measure", "draw"]:
+            with self.subTest(failure=failure):
+                font = ImageFont.truetype(self.draw.font_light_path, 22)
+                measure = ImageFont.FreeTypeFont.getlength
+                draw_text = ImageDraw.ImageDraw.text
+
+                def getlength(current_font, value, *args, **kwargs):
+                    if (
+                        current_font is font
+                        and failure == "measure"
+                        and "\u200d" in value
+                    ):
+                        raise RuntimeError("raqm_layout() failed.")
+                    return measure(current_font, value, *args, **kwargs)
+
+                def text(draw, xy, value, *args, **kwargs):
+                    if (
+                        kwargs.get("font") is font
+                        and failure == "draw"
+                        and "\u200d" in value
+                    ):
+                        raise RuntimeError("raqm_layout() failed.")
+                    return draw_text(draw, xy, value, *args, **kwargs)
+
+                with patch.object(ImageFont, "truetype", return_value=font):
+                    with patch.object(
+                        font, "font_variant", return_value=basic
+                    ) as variant:
+                        with patch.object(
+                            ImageFont.FreeTypeFont, "getlength", getlength
+                        ):
+                            with patch.object(ImageDraw.ImageDraw, "text", text):
+                                actual = self.draw._draw_player_description(description)
+                variant.assert_called_once_with(layout_engine=ImageFont.Layout.BASIC)
+                self.assertEqual(actual.tobytes(), expected.tobytes())
+
+    def test_normal_description_keeps_default_layout(self):
+        from PIL import ImageFont
+
+        font = ImageFont.truetype(self.draw.font_light_path, 22)
+        with patch.object(ImageFont, "truetype", return_value=font) as load:
+            with patch.object(font, "font_variant", wraps=font.font_variant) as variant:
+                layer = self.draw._draw_player_description("普通简介，English العربية")
+        load.assert_called_once_with(self.draw.font_light_path, 22)
+        variant.assert_not_called()
+        self.assertIsNotNone(layer.getbbox())
+
+    def test_unrelated_runtime_error_is_not_swallowed(self):
+        from PIL import ImageFont
+
+        with patch.object(
+            ImageFont.FreeTypeFont,
+            "getlength",
+            side_effect=RuntimeError("unrelated error"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "unrelated error"):
+                self.draw._draw_player_description("测试")
+
+
 class MissingStartTimeBroadcastTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_start_time_still_sends_broadcast(self):
         # Exercise the actual handler without registering or starting the bot.

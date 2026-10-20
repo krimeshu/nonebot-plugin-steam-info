@@ -718,6 +718,42 @@ def draw_game_info(
     return bg
 
 
+def _draw_player_description(description: str) -> Image.Image:
+    font = ImageFont.truetype(font_light_path, 22)
+
+    def render(font):
+        # 在独立图层绘制，降级重试时不会留下先前绘制的文字。
+        layer = Image.new("RGBA", (640, 100))
+        draw = ImageDraw.Draw(layer)
+        line = ""
+        offset = 0
+        text = description.replace("\r\n", "\n").replace("\r", "\n")
+        for char in text:
+            if char == "\n":
+                if line:
+                    draw.text((0, offset), line, font=font, fill="white")
+                line = ""
+                offset += 25
+            elif line and font.getlength(line + char) > 640:
+                draw.text((0, offset), line, font=font, fill="white")
+                line = char
+                offset += 25
+            else:
+                line += char
+            if offset >= 100:
+                break
+        if line and offset < 100:
+            draw.text((0, offset), line, font=font, fill="white")
+        return layer
+
+    try:
+        return render(font)
+    except RuntimeError as exc:
+        if "raqm" not in str(exc).lower():
+            raise
+        return render(font.font_variant(layout_engine=ImageFont.Layout.BASIC))
+
+
 def draw_player_status(
     player_bg: Image.Image,
     player_avatar: Image.Image,
@@ -773,24 +809,8 @@ def draw_player_status(
     )
 
     # 画简介
-    line_width = 0
-    offset = 0
-    line = ""
-    for idx, char in enumerate(player_description):
-        line += char
-        line_width += ImageFont.truetype(font_light_path, 22).getlength(char)
-        if line_width > 640 or idx == len(player_description) - 1 or char == "\n":
-            draw.text(
-                (280, 132 + offset),
-                line,
-                font=ImageFont.truetype(font_light_path, 22),
-                fill=(255, 255, 255),
-            )
-            line = ""
-            offset += 25
-            line_width = 0
-        if offset >= 25 * 4:
-            break
+    description_layer = _draw_player_description(player_description)
+    bg.paste(description_layer, (280, 132), description_layer)
 
     # 画游戏
 
